@@ -1,5 +1,7 @@
-const { chromium } = require("playwright")
-const fs = require("fs")
+const path = require("path")
+
+const COOKIES_PATH = path.join(__dirname, "linkedin-cookies.json")
+
 ;(async () => {
   const browser = await chromium.launch({ headless: false, slowMo: 500 })
   const context = await browser.newContext({
@@ -7,18 +9,45 @@ const fs = require("fs")
   })
   const page = await context.newPage()
 
-  // Login
-  await page.goto("https://www.linkedin.com/login")
-  await page.fill("input#username", "email.com")
-  await page.fill("input#password", "Password123")
-  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.click('button[type="submit"]')])
+  // Check if cookies exist
+  let loggedIn = false
+  if (fs.existsSync(COOKIES_PATH)) {
+    try {
+      const cookies = JSON.parse(fs.readFileSync(COOKIES_PATH, "utf8"))
+      await context.addCookies(cookies)
+      console.log("🍪 Loaded saved cookies")
+      
+      // Verify session validity
+      await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" })
+      if (!page.url().includes("login") && !page.url().includes("checkpoint")) {
+        loggedIn = true
+        console.log("✅ Session restored - Skipping login")
+      }
+    } catch (e) {
+      console.log("❌ Failed to load cookies:", e.message)
+    }
+  }
 
-  // Check login success
-  const urlAfterLogin = page.url()
-  if (urlAfterLogin.includes("/checkpoint") || urlAfterLogin.includes("login")) {
-    console.error("❌ Login failed — possibly CAPTCHA or verification required.")
-    await browser.close()
-    return
+  // Perform login if needed
+  if (!loggedIn) {
+    console.log("🔒 Attempting login...")
+    await page.goto("https://www.linkedin.com/login")
+    await page.fill("input#username", "fapajag292@mytaemin.com")
+    await page.fill("input#password", "Password123")
+    await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.click('button[type="submit"]')])
+
+    // Check login success
+    const urlAfterLogin = page.url()
+    if (urlAfterLogin.includes("/checkpoint") || urlAfterLogin.includes("login")) {
+      console.error("❌ Login failed - possibly CAPTCHA or verification required")
+      await browser.close()
+      return
+    }
+
+    // Save valid cookies
+    const cookies = await context.cookies()
+    fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2))
+    console.log("🔑 Login successful - Cookies saved")
   }
 
   // Get cookies and extract csrf-token from JSESSIONID
